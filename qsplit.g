@@ -121,3 +121,51 @@ PrimeAbove := function(p, ell)
              numberOfPrimes := Length(fac));
 end;
 
+# The lattice E_a = { (y,k) in a + Z : y = k*y0 mod (1-zeta)a } with sigma(y,k) = (zeta*y, k).
+# Input: p, an ideal a and optionally y0 in a but not in (1-zeta)a.
+# Output: a record with the p x p matrix A of sigma, the basis of E_a, y0, and (1-zeta)a.
+EMatrix := function(arg)
+  local p, a, y0, Z, d, oneMinusZeta, H1, B, bigZ, A, j, img;
+  p := arg[1];
+  a := arg[2];
+  d := p - 1;
+  Z := ZetaMat(p);
+  oneMinusZeta := ZetaPower(p, 0) - ZetaPower(p, 1);
+  H1 := Filtered(HermiteNormalFormIntegerMat(
+            List(a, b -> MulElt(p, oneMinusZeta, b))), r -> not IsZero(r));
+  if Length(arg) >= 3 then
+    y0 := arg[3];
+    if not IsInLattice(a, y0) or IsInLattice(H1, y0) then
+      Error("y0 must lie in a but not in (1-zeta)a");
+    fi;
+  else
+    y0 := First(a, v -> not IsInLattice(H1, v));
+  fi;
+  B := List(H1, v -> Concatenation(v, [0]));
+  Add(B, Concatenation(y0, [1]));
+  bigZ := NullMat(p, p);
+  bigZ{[1 .. d]}{[1 .. d]} := Z;
+  bigZ[p][p] := 1;
+  A := [];
+  for j in [1 .. p] do
+    img := bigZ * B[j];
+    Add(A, SolutionIntMat(B, img));
+  od;
+  return rec(A := TransposedMat(A), basis := B, y0 := y0, H1 := H1);
+end;
+
+# The permutation matrix of a p-cycle.
+CycleMatrix := function(p)
+  local P, j;
+  P := NullMat(p, p);
+  for j in [1 .. p] do
+    P[(j mod p) + 1][j] := 1;
+  od;
+  return P;
+end;
+
+# A Z-basis (as rows) of the integer kernel { x : M x = 0 }.
+ColumnKernel := function(M)
+  return NullspaceIntMat(TransposedMat(M));
+end;
+
