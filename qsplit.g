@@ -1,3 +1,8 @@
+# qsplit.g
+# GAP functions for recognizing quasi-split algebraic tori with splitting group of prime order.
+# Author: Armin Jamshidpey, 2026.
+
+
 # The matrix of multiplication by zeta on Z[zeta_p], in the basis 1, zeta, ..., zeta^(p-2).
 # Input: a prime p. Output: a (p-1)x(p-1) integer matrix.
 ZetaMat := function(p)
