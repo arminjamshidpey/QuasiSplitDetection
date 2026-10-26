@@ -169,3 +169,198 @@ ColumnKernel := function(M)
   return NullspaceIntMat(TransposedMat(M));
 end;
 
+# The order of the finite quotient (lattice spanned by K) / (lattice spanned by cols).
+QuotientOrder := function(K, cols)
+  local C, D;
+  if Length(K) = 0 then
+    return 1;
+  fi;
+  C := List(cols, c -> SolutionIntMat(K, c));
+  if fail in C then
+    Error("columns not in the lattice");
+  fi;
+  D := DiagonalOfMat(SmithNormalFormIntegerMat(C));
+  D := Filtered(D, x -> x <> 0);
+  if Length(D) < Length(K) then
+    return infinity;
+  fi;
+  return Product(D);
+end;
+
+# The exponent e with N = p^e (gives an error if N is not a power of p).
+LogP := function(N, p)
+  local e;
+  e := 0;
+  while N mod p = 0 do
+    N := N / p;
+    e := e + 1;
+  od;
+  if N <> 1 then
+    Error("quotient is not a p-group");
+  fi;
+  return e;
+end;
+
+# The local invariants of the lattice L_A for a matrix A of order p (Algorithm 1).
+# Output: a record with n, f, m, the orders of Q0 and Q1, and the invariants r, s, t.
+LocalInvariants := function(A, p)
+  local n, I, AmI, N, f, m, K0, K1, q0, q1, r, s, t;
+  n := Length(A);
+  I := IdentityMat(n);
+  if A^p <> I or A = I then
+    Error("A must have order p");
+  fi;
+  AmI := A - I;
+  N := Sum([0 .. p - 1], i -> A^i);
+  K0 := ColumnKernel(AmI);
+  K1 := ColumnKernel(N);
+  f := Length(K0);
+  m := (n - f) / (p - 1);
+  q0 := QuotientOrder(K0, TransposedMat(N));
+  q1 := QuotientOrder(K1, TransposedMat(AmI));
+  r := LogP(q0, p);
+  s := LogP(q1, p);
+  t := f - r;
+  if t <> m - s then
+    Error("consistency check f - r = m - s failed");
+  fi;
+  return rec(n := n, f := f, m := m, r := r, s := s, t := t,
+             Q0 := q0, Q1 := q1);
+end;
+
+# The ideal of Z[zeta_p] attached to ker N(A) when m = 1 (the forward reduction).
+# A is conjugate into S_p if and only if s = 0 and this ideal is principal.
+SteinitzIdealRankOne := function(A, p)
+  local n, K1, v, Q, i, C, den, cols;
+  n := Length(A);
+  K1 := ColumnKernel(Sum([0 .. p - 1], i -> A^i));
+  if Length(K1) <> p - 1 then
+    Error("this function needs m = 1");
+  fi;
+  v := K1[1];
+  Q := [v];
+  for i in [2 .. p - 1] do
+    Add(Q, A * Q[i - 1]);
+  od;
+  C := List(K1, w -> SolutionMat(Q, w));
+  den := Lcm(List(Flat(C), DenominatorRat));
+  cols := List(C, c -> den * c);
+  return rec(ideal := Filtered(HermiteNormalFormIntegerMat(cols),
+                                r -> not IsZero(r)),
+             denominator := den, v := v);
+end;
+
+# A Z-basis of the lattice of integer matrices X with X*A = P*X.
+IntertwinerBasis := function(A, P)
+  local n, rows, r, c, k, eq, K;
+  n := Length(A);
+  rows := [];
+  for r in [1 .. n] do
+    for c in [1 .. n] do
+      eq := List([1 .. n * n], i -> 0);
+      for k in [1 .. n] do
+        eq[(r - 1) * n + k] := eq[(r - 1) * n + k] + A[k][c];
+        eq[(k - 1) * n + c] := eq[(k - 1) * n + c] - P[r][k];
+      od;
+      Add(rows, eq);
+    od;
+  od;
+  K := ColumnKernel(rows);
+  return List(K, x -> List([1 .. n], r -> x{[(r - 1) * n + 1 .. r * n]}));
+end;
+
+# Random search for two integer matrices X1, X2 with Xi*A = P*Xi and coprime determinants.
+# Such a pair shows that A and P are conjugate over Z_q for every prime q.
+CoprimeIntertwiners := function(A, P, tries, seed)
+  local basis, rs, found, X, d, i, prev;
+  basis := IntertwinerBasis(A, P);
+  rs := RandomSource(IsMersenneTwister, seed);
+  prev := [];
+  for i in [1 .. tries] do
+    X := Sum(basis, B -> Random(rs, [-1, 0, 0, 1]) * B);
+    d := DeterminantIntMat(X);
+    if d <> 0 then
+      found := First(prev, e -> Gcd(e[2], d) = 1);
+      if found <> fail then
+        return rec(X1 := found[1], d1 := found[2], X2 := X, d2 := d,
+                   rank := Length(basis));
+      fi;
+      Add(prev, [X, d]);
+    fi;
+  od;
+  return fail;
+end;
+
+# For a principal ideal gamma*R and E = EMatrix(p, gamma*R, gamma), a matrix X in GL(p,Z)
+# with X*A*X^-1 = P, built from the permuted basis (gamma*zeta^j, 1).
+PrincipalConjugator := function(p, E, gamma)
+  local Z, v, cols, j, Y;
+  Z := ZetaMat(p);
+  v := ShallowCopy(gamma);
+  cols := [];
+  for j in [1 .. p] do
+    Add(cols, SolutionIntMat(E.basis, Concatenation(v, [1])));
+    v := Z * v;
+  od;
+  Y := TransposedMat(cols);
+  return Y^-1;
+end;
+
+# A random conjugate U*A*U^-1 with U a product of elementary matrices.
+# Useful for generating test instances with the same invariants.
+ScrambleMatrix := function(A, steps, seed)
+  local n, rs, U, i, j, k, E;
+  n := Length(A);
+  rs := RandomSource(IsMersenneTwister, seed);
+  U := IdentityMat(n);
+  for k in [1 .. steps] do
+    i := Random(rs, [1 .. n]);
+    j := Random(rs, [1 .. n]);
+    if i <> j then
+      E := IdentityMat(n);
+      E[i][j] := Random(rs, [-1, 1]);
+      U := U * E;
+    fi;
+  od;
+  return U * A * U^-1;
+end;
+
+# All solutions (a,b) with a,b >= 0 of a^2 + D*b^2 = N.
+NormEquationSolutions := function(D, N)
+  local sols, a, b;
+  sols := [];
+  for b in [0 .. RootInt(QuoInt(N, D))] do
+    a := N - D * b^2;
+    if a >= 0 and RootInt(a)^2 = a then
+      Add(sols, [RootInt(a), b]);
+    fi;
+  od;
+  return sols;
+end;
+
+# All reduced positive definite binary quadratic forms (a,b,c) of discriminant D < 0.
+ReducedForms := function(D)
+  local forms, a, b, c;
+  forms := [];
+  for a in [1 .. RootInt(QuoInt(-D, 3))] do
+    for b in [-a .. a] do
+      if (b^2 - D) mod (4 * a) = 0 then
+        c := (b^2 - D) / (4 * a);
+        if a <= c and (b >= 0 or (AbsInt(b) <> a and a <> c)) then
+          Add(forms, [a, b, c]);
+        fi;
+      fi;
+    od;
+  od;
+  return forms;
+end;
+
+# The matrix A_a for a prime a above ell, together with a scrambled conjugate.
+# Whether a is principal (i.e. the label) must be decided outside GAP, e.g. in PARI/GP.
+InstanceFromPrime := function(p, ell, steps, seed)
+  local pr, E;
+  pr := PrimeAbove(p, ell);
+  E := EMatrix(p, pr.ideal);
+  return rec(ideal := pr.ideal, A := E.A,
+             scrambled := ScrambleMatrix(E.A, steps, seed));
+end;
